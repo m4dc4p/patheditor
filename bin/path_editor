@@ -1,0 +1,133 @@
+# A simple application for editing the environment's path information.
+require 'rubygems'
+require 'highline'
+require 'commandline'
+require 'pathname'
+
+$: << (Pathname.new(__FILE__).dirname + '..\lib') unless $:.include?(Pathname.new(__FILE__).dirname + '..\lib')
+require 'windows_path'
+
+class App < CommandLine::Application
+  def initialize
+    synopsis "[[-c, --clean] [-a, --add PATH] [r, --remove EXPR]] [--case-sensitive] [-n, --no-confirmation] [-h, --help]"
+    short_description <<-EOS
+With no arguments, displays the current path, broken into separate entries. Arguments allow directories to be added to or removed from the path. The path can also be cleaned of directories which no longer exist."
+    EOS
+    
+    long_description <<-EOS
+A script for manipulating the environment's PATH variable. Editing this variable is a huge pain in Windows - this script aims to make it easier.    
+    EOS
+    
+    option :names => %w(-c --clean), :arity => 0, 
+      :opt_found => proc { |opt, user_option, opt_args|
+        @clean = true
+      },
+      :opt_description => <<-EOS
+Cleans directories which no longer exist from the path, and removes any duplicate directories.
+      EOS
+
+    option :names => %w(-a --add), :arity => 1, :arg_description => "path", 
+      :opt_found => proc { |opt, user_option, opt_args|
+        @add = Pathname.new opt_args.first
+      },
+      :opt_description => <<-EOS
+Adds the given path to the PATH environment variable. If the path already exists (in the exact form given), it will not be added.
+      EOS
+
+    option :names => %w(-r --remove), :arity => 1, :arg_description => "expression",
+      :opt_found => proc { |opt, user_option, opt_args|
+        @remove = opt_args.first
+      },
+      :opt_description => <<-EOS
+Removes the given path from the environment variable. Special characters such as "?" and "*" will be treated
+as wildcards, just like at the command line. Be sure to enclose the expression in quotes, or the command prompt will
+attempt to expand them for you. Note also that the command prompt seems to switch "\" characters to "/", so matches
+with those characters will appear odd.
+      EOS
+
+    option :names => %w(--case-sensitive), :arity => 0,
+      :opt_found => proc { |opt, user_option, opt_args|
+        @case_sensitive = true
+      },
+      :opt_description => <<-EOS
+Makes path comparisons case-sensitive if present. Path comparisons are case-insensitive otherwise.
+      EOS
+      
+    option :names => %w(-n --no-confirmation), :arity => 0,
+      :opt_found => proc { @confirm_disabled = true},
+      :opt_description => <<-EOS
+Forces changes to occur with confirmation. True by default unless paths are being removed with a regular expression and more than one path is matched - then it is false. This is intended to prevent the accidental remove of all paths or a similar disaster.
+      EOS
+      
+      option :debug, :help
+  end
+
+  def main
+    @hl = HighLine.new
+    @currPath = WindowsPath.new
+    
+    if @clean || @add || @remove
+      if @clean
+				@currPath.clean do |path, reason|
+					case reason
+						when :dup
+							@hl.say "Removing #{path} (duplicate)" 						
+						when :notfound
+							@hl.say "Removing #{path} (doesn't exist)"						
+					end
+					
+					path_removed
+				end
+      end
+      
+      if @add
+        unless @currPath.paths.include?(@add)
+          @currPath.paths.add(@add)
+          @path_updated = true
+          @hl.say "Added #{@add} to path." 
+        else
+          @hl.say "#{@add} not added because it already exists in the path."
+        end
+      end
+      
+      if @remove
+        @currPath.remove(@remove) do |p| 
+					@hl.say "Removing path #{p}"
+					path_removed
+        end
+      end
+
+      if @path_updated
+        if confirmation_needed? 
+					@currPath.update if @hl.agree("Would you like to commit the changes made? [Yn] ", true)
+        else
+          @currPath.update
+        end
+      end
+    else
+      # Print path
+      @hl.say "Current path entries:" 
+      @currPath.paths.each { |p| @hl.say "\t#{p}" } 
+    end
+  rescue 
+    puts "Exception: #{$!.message}"
+    puts $!.backtrace.join("\n")
+  end
+  
+  def confirmation_needed?
+		# No need to confirm if either the user specified no confirmation explicitly, or
+		# the automatic confirmation never got set.
+		(@automatic_confirm && ! @confirm_disabled) || false
+  end
+  
+  # Records that a path was removed
+  def path_removed
+		@path_updated = true
+		# first time through, @paths_removed is false. Automatic confimration
+		# should happen with more than one directory, therefore this will succeed.
+    @automatic_confirm = true if @paths_removed  
+    @paths_removed = true
+  end
+end
+
+App.run unless $0 == __FILE__

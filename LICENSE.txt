@@ -1,7 +1,7 @@
 #
-# = RubySSPI
+# = PathEditor
 #
-# Copyright (c) 2006-2007 Justin Bailey
+# Copyright (c) Justin Bailey
 # 
 # Written and maintained by Justin Bailey <jgbailey@gmail.com>.
 #
